@@ -5,35 +5,46 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Setup repo
+      - name: Checkout repo
         uses: actions/checkout@v4
-      
-      - name: Setup node
-        uses: actions/setup-node@v4.0.2
+
+      # Install PNPM (and add it to PATH)
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # Setup Node with PNPM cache (uses pnpm-lock.yaml)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 18.x
-          cache: 'pnpm'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: 17
+          distribution: temurin
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Expo
+      - name: Setup Expo & EAS
         uses: expo/expo-github-action@v8
         with:
           expo-version: latest
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
+      # Install dependencies with pnpm (uses the lockfile)
       - name: Install dependencies
-        run: pnpm ci
+        run: pnpm install --frozen-lockfile
 
+      # Build Android (EAS local) and export APK
       - name: Build Android app
         run: eas build --platform android --profile development --local --output ${{ github.workspace }}/app-release.apk
 
