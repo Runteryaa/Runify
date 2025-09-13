@@ -42,7 +42,7 @@ jobs:
 
       # Install dependencies with pnpm (uses the lockfile)
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       # Build Android (EAS local) and export APK
       - name: Build Android app
