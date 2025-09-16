@@ -1,19 +1,25 @@
+// app/(tabs)/_layout.tsx
 import { Tabs } from 'expo-router';
-import React from 'react';
-
+import React, { useEffect } from 'react';
+import { useSpotify } from '@/store/spotify';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import Feather from '@expo/vector-icons/Feather';
 
 export default function TabLayout() {
+  // hydrate tokens on app start
+  const { init } = useSpotify();
+  useEffect(() => { init(); }, [init]);
+
   const colorScheme = useColorScheme();
 
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false
-      }}>
+        headerShown: false,
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
