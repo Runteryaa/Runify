@@ -1,4 +1,3 @@
-// app/(tabs)/search.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -12,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
+import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { useSpotify } from '@/store/spotify';
@@ -45,7 +45,6 @@ function msToMinSec(ms?: number) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-// debounce
 function useDebouncedValue<T>(value: T, delay = 350) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -55,7 +54,6 @@ function useDebouncedValue<T>(value: T, delay = 350) {
   return debounced;
 }
 
-// merge unique by id
 function mergeUniqueById<T extends { id: string }>(prev: T[], next: T[]) {
   const map = new Map(prev.map(p => [p.id, p]));
   for (const n of next) map.set(n.id, n);
@@ -89,8 +87,43 @@ export default function SearchScreen() {
   const [error, setError] = useState<string | null>(null);
   const loadingRef = useRef(false);
 
-  // currently playing in the inline player
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
+  // ---- expo-audio preview state
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const player = useAudioPlayer(previewUrl ?? ''); // source updates when previewUrl changes
+  const status = useAudioPlayerStatus(player);
+
+  // Configure audio once (silent mode on iOS, duck others on Android)
+  useEffect(() => {
+    setAudioModeAsync({
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    // string enums per expo-audio docs:
+    interruptionModeAndroid: 'duckOthers', // other valid: 'doNotMix'
+    interruptionMode: 'mixWithOthers',     // iOS-style global option
+  }).catch(() => {});
+  }, []);
+
+  // Autoplay when a new previewUrl is set
+  useEffect(() => {
+    if (!previewUrl) return;
+    // seek to start & play (expo-audio does not auto-reset position)
+    player.seekTo(0);
+    player.play();
+    // stop when unmount
+    return () => {
+      player.pause();
+      player.seekTo(0);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewUrl]);
+
+  const stopPreview = useCallback(() => {
+    player.pause();
+    player.seekTo(0);
+    setPreviewId(null);
+    setPreviewUrl(null);
+  }, [player]);
 
   const canSearch = debouncedQ.trim().length > 0;
   const selected = mode === 'track' ? tracks : mode === 'album' ? albums : artists;
@@ -98,6 +131,7 @@ export default function SearchScreen() {
   const doSearch = useCallback(async () => {
     if (!canSearch) {
       setTracks([]); setAlbums([]); setArtists([]); setNextUrl(null); setError(null);
+      stopPreview();
       return;
     }
     if (loadingRef.current) return;
@@ -136,7 +170,7 @@ export default function SearchScreen() {
       setLoading(false);
       loadingRef.current = false;
     }
-  }, [debouncedQ, canSearch, mode, ensureToken, signIn]);
+  }, [debouncedQ, canSearch, mode, ensureToken, signIn, stopPreview]);
 
   useEffect(() => { doSearch(); }, [doSearch]);
 
@@ -170,15 +204,14 @@ export default function SearchScreen() {
     }
   }, [nextUrl, loadingMore, ensureToken, mode]);
 
-  // switch mode resets results + pagination; also stop current preview
+  // switching mode resets results + pagination and stops preview
   useEffect(() => {
     setTracks([]); setAlbums([]); setArtists([]); setNextUrl(null); setError(null);
-    setCurrentTrack(null);
+    stopPreview();
     if (canSearch) doSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  // ----- Header UI
   const header = useMemo(() => (
     <ThemedView style={styles.header}>
       <ThemedText type="title">Search</ThemedText>
@@ -215,50 +248,82 @@ export default function SearchScreen() {
             <ThemedText type="defaultSemiBold" style={mode === m ? styles.chipActiveText : undefined}>
               {m === 'track' ? 'Tracks' : m === 'album' ? 'Albums' : 'Artists'}
             </ThemedText>
+            
           </Pressable>
+          
         ))}
       </ThemedView>
     </ThemedView>
   ), [q, mode, doSearch]);
 
-  // ----- Renderers
   const renderTrack = ({ item }: { item: Track }) => {
-    const art = item.album?.images?.[0]?.url;
-    const artistsStr = (item.artists ?? []).map(a => a.name).join(', ');
-    const ext = item.external_urls?.spotify;
+  const art = item.album?.images?.[0]?.url;
+  const artistsStr = (item.artists ?? []).map(a => a.name).join(', ');
+  const ext = item.external_urls?.spotify;
 
-    return (
-      <ThemedView style={styles.rowWrap}>
-        <Pressable
-          onPress={() => openSpotify(ext)}
-          android_ripple={{ color: '#00000011' }}
-          style={{ flex: 1, borderRadius: 10 }}
-        >
-          <ThemedView style={styles.row}>
-            <RNImage
-              source={art ? { uri: art } : require('@/assets/images/partial-react-logo.png')}
-              style={styles.thumb}
-            />
-            <ThemedView style={{ flex: 1, minWidth: 0 }}>
-              <ThemedText numberOfLines={1} type="defaultSemiBold">{item.name}</ThemedText>
-              <ThemedText style={styles.subtle} numberOfLines={1}>{artistsStr} • {item.album?.name ?? ''}</ThemedText>
-            </ThemedView>
-            <ThemedText style={styles.duration}>{msToMinSec(item.duration_ms)}</ThemedText>
-          </ThemedView>
-        </Pressable>
+  const isCurrent = previewId === item.id;
+  const isPlaying = isCurrent && status.playing;
+  const progress = isCurrent && status.duration > 0 ? status.currentTime / status.duration : 0;
 
-        {/* Preview button => opens bottom player with this track
-            The Player will try spotify-preview-finder if preview_url is missing */}
-        <Pressable
-          onPress={() => setCurrentTrack(item)}
-          hitSlop={10}
-          style={styles.previewPill}
-        >
-          <ThemedText type="defaultSemiBold">Preview</ThemedText>
-        </Pressable>
-      </ThemedView>
-    );
+  const onToggle = () => {
+    if (!item.preview_url) {
+      console.log('No preview_url for', item.name);
+      // quick visual feedback
+      // (replace with your toast/snackbar if you use one)
+      alert('No preview available for this track.');
+      return;
+    }
+    if (isCurrent) {
+      // same track: toggle play/pause
+      if (isPlaying) {
+        player.pause();
+      } else {
+        player.play();
+      }
+      
+    } else {
+      // new track: load and play
+      setPreviewId(item.id);
+      setPreviewUrl(item.preview_url);
+    }
   };
+
+  return (
+    <ThemedView style={styles.rowWrap}>
+      <Pressable
+        onPress={() => openSpotify(ext)}
+        android_ripple={{ color: '#00000011' }}
+        style={{ flex: 1, borderRadius: 10 }}
+      >
+        <ThemedView style={styles.row}>
+          <RNImage
+            source={art ? { uri: art } : require('@/assets/images/partial-react-logo.png')}
+            style={styles.thumb}
+          />
+          <ThemedView style={{ flex: 1, minWidth: 0 }}>
+            <ThemedText numberOfLines={1} type="defaultSemiBold">{item.name}</ThemedText>
+            <ThemedText style={styles.subtle} numberOfLines={1}>{artistsStr} • {item.album?.name ?? ''}</ThemedText>
+          </ThemedView>
+
+          {/* Preview control */}
+          <Pressable onPress={onToggle} hitSlop={10} style={styles.previewPill}>
+            <ThemedText type="defaultSemiBold">
+              {isPlaying ? 'Pause' : isCurrent ? 'Play' : 'Preview'}
+            </ThemedText>
+          </Pressable>
+          
+        </ThemedView>
+      </Pressable>
+
+      {/* Progress bar when this row is playing */}
+      {isCurrent ? (
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(progress, 1)) * 100}%` }]} />
+        </View>
+      ) : null}
+    </ThemedView>
+  );
+};
 
   const renderAlbum = ({ item }: { item: Album }) => {
     const art = item.images?.[0]?.url;
@@ -276,6 +341,7 @@ export default function SearchScreen() {
             source={art ? { uri: art } : require('@/assets/images/partial-react-logo.png')}
             style={styles.thumb}
           />
+        {/* title + subtitle */}
           <ThemedView style={{ flex: 1, minWidth: 0 }}>
             <ThemedText numberOfLines={1} type="defaultSemiBold">{item.name}</ThemedText>
             <ThemedText style={styles.subtle} numberOfLines={1}>{artistsStr}</ThemedText>
@@ -317,63 +383,44 @@ export default function SearchScreen() {
 
   const keyExtractor = (it: any) => it.id;
 
-  // Empty state before typing
   if (!canSearch && !loading) {
     return (
-      <ThemedView style={{ flex: 1 }}>
-        <FlatList
-          data={[]}
-          renderItem={renderItem}
-          ListHeaderComponent={header}
-          ListEmptyComponent={
-            <ThemedView style={styles.center}>
-              <ThemedText style={styles.subtle}>Start typing to search…</ThemedText>
-            </ThemedView>
-          }
-          contentContainerStyle={{ paddingBottom: currentTrack ? 140 : 16 }}
-        />
-        {/* inline bottom player */}
-        {currentTrack ? (
-          <ThemedView style={styles.playerContainer}>
-            <Player track={currentTrack} onClose={() => setCurrentTrack(null)} />
+      <FlatList
+        data={[]}
+        ListHeaderComponent={header}
+        renderItem={renderItem}
+        ListEmptyComponent={
+          <ThemedView style={styles.center}>
+            <ThemedText style={styles.subtle}>Start typing to search…</ThemedText>
           </ThemedView>
-        ) : null}
-      </ThemedView>
+        }
+      />
     );
   }
 
   return (
-    <ThemedView style={{ flex: 1 }}>
-      <FlatList
-        data={selected}
-        keyExtractor={keyExtractor}
-        ListHeaderComponent={header}
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
-        renderItem={renderItem}
-        onEndReachedThreshold={0.4}
-        onEndReached={loadMore}
-        ListFooterComponent={
-          loading || loadingMore ? (
-            <ThemedView style={styles.footer}><ActivityIndicator /></ThemedView>
-          ) : null
-        }
-        contentContainerStyle={{ paddingBottom: currentTrack ? 140 : 16 }}
-        ListEmptyComponent={
-          loading ? null : (
-            <ThemedView style={styles.center}>
-              <ThemedText>No results</ThemedText>
-            </ThemedView>
-          )
-        }
-      />
-
-      {/* inline bottom player above tabs; adds safe padding in list via contentContainerStyle */}
-      {currentTrack ? (
-        <ThemedView style={styles.playerContainer}>
-          <Player track={currentTrack} onClose={() => setCurrentTrack(null)} />
-        </ThemedView>
-      ) : null}
-    </ThemedView>
+    <FlatList
+      data={selected}
+      keyExtractor={keyExtractor}
+      ListHeaderComponent={header}
+      ItemSeparatorComponent={() => <View style={styles.sep} />}
+      renderItem={renderItem}
+      onEndReachedThreshold={0.4}
+      onEndReached={loadMore}
+      ListFooterComponent={
+        loading || loadingMore ? (
+          <ThemedView style={styles.footer}><ActivityIndicator /></ThemedView>
+        ) : null
+      }
+      contentContainerStyle={{ paddingBottom: 16 }}
+      ListEmptyComponent={
+        loading ? null : (
+          <ThemedView style={styles.center}>
+            <ThemedText>No results</ThemedText>
+          </ThemedView>
+        )
+      }
+    />
   );
 }
 
@@ -410,28 +457,30 @@ const styles = StyleSheet.create({
   thumb: { width: 56, height: 56, borderRadius: 8, backgroundColor: '#eee' },
   duration: { width: 46, textAlign: 'right', opacity: 0.7 },
 
+  sep: { height: 1, backgroundColor: '#e5e7eb', marginLeft: 16 },
+  center: { alignItems: 'center', gap: 8, paddingVertical: 16 },
+  footer: { paddingVertical: 12, alignItems: 'center' },
+
+  previewBtn: { alignSelf: 'flex-end', paddingHorizontal: 12, paddingVertical: 4, marginTop: -6 },
   previewPill: {
-    alignSelf: 'flex-end',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    marginTop: -6,
+    alignSelf: 'center',
+    marginLeft: 8,
   },
-
-  sep: { height: 1, backgroundColor: '#e5e7eb', marginLeft: 16 },
-  center: { alignItems: 'center', gap: 8, paddingVertical: 16 },
-  footer: { paddingVertical: 12, alignItems: 'center' },
-
-  // fixed bottom area for the mini-player (above tabs)
-  playerContainer: {
-    position: 'absolute',
-    left: 0, right: 0, bottom: 0,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 8,
-    paddingBottom: 8, // rely on your tab safe area; add extra if needed
-    backgroundColor: 'transparent', // ThemedView provides bg
+  progressTrack: {
+    height: 3,
+    backgroundColor: '#e5e7eb',
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginTop: 6,
+    marginHorizontal: 16,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#0a7ea4',
   },
 });

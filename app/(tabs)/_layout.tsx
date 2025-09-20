@@ -42,6 +42,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="offline"
+        options={{
+          title: 'Offline',
+          tabBarIcon: ({ color }) => <Feather name="cloud-off" size={28} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: 'Settings',

@@ -14,6 +14,11 @@
       "bundleIdentifier": "com.runterya.runify"
     },
     "android": {
+      "permissions": [
+        "READ_MEDIA_AUDIO",
+        "FOREGROUND_SERVICE",
+        "WAKE_LOCK"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -30,6 +35,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-media-library",
       [
         "expo-splash-screen",
         {

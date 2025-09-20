@@ -10,6 +10,7 @@ import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import PlayerHost from '@/components/player/playerHost';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -24,7 +25,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} translucent backgroundColor="transparent" />
-
+        <PlayerHost />
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="callback" options={{ presentation: 'transparentModal' }} />
@@ -34,3 +35,4 @@ export default function RootLayout() {
     </SafeAreaProvider>
   );
 }
+
